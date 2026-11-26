@@ -1,0 +1,17 @@
+replicaCount: 1
+
+persistence:
+  storageClass: gp3
+  size: 1Gi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+externalSecret:
+  enabled: false
+  awsSecretName: roboshop/dev/redis

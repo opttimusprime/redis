@@ -1,0 +1,111 @@
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+    }
+
+    parameters {
+        string(
+            name: 'REVISION',
+            defaultValue: '',
+            description: 'Helm revision number to rollback to'
+        )
+    }
+
+    environment {
+        AWS_REGION = 'us-east-1'
+        EKS_CLUSTER_NAME = 'roboshop-dev-eks'
+        NAMESPACE = 'roboshop'
+        RELEASE_NAME = 'redis'
+        KUBECONFIG = "${WORKSPACE}/.kube/config"
+    }
+
+    stages {
+        stage('Validate Parameters') {
+            steps {
+                script {
+                    if (!(params.REVISION ==~ /[1-9][0-9]*/)) {
+                        error('Enter a valid Helm revision number')
+                    }
+                }
+            }
+        }
+
+        stage('Configure Kubeconfig') {
+            steps {
+                sh '''
+                    aws eks update-kubeconfig \
+                        --region "$AWS_REGION" \
+                        --name "$EKS_CLUSTER_NAME"
+
+                    kubectl get nodes
+                '''
+            }
+        }
+
+        stage('Helm History') {
+            steps {
+                sh '''
+                    helm history "$RELEASE_NAME" \
+                        -n "$NAMESPACE"
+                '''
+            }
+        }
+
+        stage('Rollback Approval') {
+            steps {
+                timeout(time: 1, unit: 'MINUTES') {
+                    input message: "Confirm Redis rollback to revision ${params.REVISION}?",
+                          ok: 'Rollback'
+                }
+            }
+        }
+
+        stage('Rollback Redis') {
+            steps {
+                sh '''
+                    helm rollback "$RELEASE_NAME" "$REVISION" \
+                        --namespace "$NAMESPACE" \
+                        --wait \
+                        --timeout 15m
+                '''
+            }
+        }
+
+        stage('Verify Rollback') {
+            steps {
+                sh '''
+                    kubectl rollout status statefulset/redis \
+                        -n "$NAMESPACE" --timeout=300s
+
+                    kubectl get pods -n "$NAMESPACE" -o wide
+                    kubectl get svc -n "$NAMESPACE"
+                    kubectl get pvc -n "$NAMESPACE"
+
+                    kubectl exec redis-0 -n "$NAMESPACE" \
+                        -- redis-cli ping | grep -x PONG
+
+                    helm status "$RELEASE_NAME" -n "$NAMESPACE"
+                    helm history "$RELEASE_NAME" -n "$NAMESPACE"
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Redis rollback successful'
+        }
+
+        failure {
+            echo 'Redis rollback failed'
+        }
+
+        aborted {
+            echo 'Redis rollback aborted'
+        }
+    }
+}

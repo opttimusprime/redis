@@ -1,0 +1,67 @@
+pipeline {
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+
+                script {
+                    env.GIT_COMMIT_SHA = sh(
+                        script: 'git rev-parse HEAD',
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Git Commit SHA: ${env.GIT_COMMIT_SHA}"
+                }
+            }
+        }
+
+        stage('Check Helm Version') {
+            steps {
+                sh 'helm version'
+            }
+        }
+
+        stage('Helm Lint') {
+            steps {
+                sh 'helm lint ./helm'
+            }
+        }
+
+        stage('Helm Template') {
+            steps {
+                sh '''
+                    helm template redis ./helm \
+                        --namespace roboshop
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Redis CI validation successful'
+            echo "Passing Git Commit SHA: ${env.GIT_COMMIT_SHA}"
+
+            build job: 'rs-redis-cd',
+                  parameters: [
+                      string(
+                          name: 'GIT_COMMIT_SHA',
+                          value: env.GIT_COMMIT_SHA
+                      )
+                  ],
+                  wait: false
+        }
+
+        failure {
+            echo 'Redis CI validation failed'
+        }
+    }
+}
