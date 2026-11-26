@@ -39,7 +39,7 @@ pipeline {
             steps {
                 sh '''
                     helm template redis ./helm \
-                        --namespace roboshop
+                        --namespace redis
                 '''
             }
         }
